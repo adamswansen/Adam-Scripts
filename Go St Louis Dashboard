@@ -1,0 +1,170 @@
+import csv
+import requests
+
+MAX_RETRIES = 3
+TIMEOUT = 15
+
+API_KEY = "KMVON3kq3XACAi6X7v93Ywfh4o9GWm5n"
+API_SECRET = "4iWghgVjmdRGtY4MkfoKiM2krtHr4KcT"
+RACE_ID = "81794"
+EVENT_IDS = {
+    "719505": "Marathon",
+    "719506": "Half Marathon",
+    "719507": "Marathon Relay",
+    "719508": "10K",
+    "719509": "5K",
+    "806053": "5K and 10K",
+    "806064": "5K and Half",
+    "806065": "5K and Full Marathon",
+}
+
+def fetch_participants(api_key, api_secret, race_id):
+    url = f"https://runsignup.com/Rest/race/81794/participants"
+    params = {
+        'api_key': api_key,
+        'api_secret': api_secret,
+        'format': 'json',
+        'event_id': race_id,
+        'page': '1',
+        'results_per_page': '2500',
+        'sort': 'registration_id ASC',
+        'include_counties': 'F',
+        'include_template_participant': 'F',
+        'include_user_anonymous_flag': 'F',
+        'include_questions': 'T',
+        'include_corrals': 'F',
+        'include_est_finish': 'F',
+        'include_corp_teams': 'F',
+        'include_registration_addons': 'F',
+        'include_memberships': 'F',
+        'include_coupon_details': 'F',
+        'include_registration_notes': 'F',
+        'include_checkin_data': 'F',
+        'include_waiver_info': 'F',
+        'include_multiple_waivers': 'F',
+        'include_usat_waiver_info': 'F',
+        'include_pending_lottery_selection': 'F',
+        'exclude_registrations_via_super_event': 'F',
+        'include_shipping_address': 'F',
+        'include_profile_type': 'F',
+        'include_profile_image_url': 'F',
+        'supports_nb': 'T',
+        'include_fundraisers': 'F',
+        'include_multi_race_bundle_info': 'F'
+    }
+    all_participants = []
+
+    while True:
+        response = requests.get(url, params=params)
+
+        if response.status_code == 200:
+            try:
+                data = response.json()
+                participants = data[0]['participants']  # Extract participants list
+                all_participants.extend(participants)
+                if 'next_page' in data[0]:
+                    params['page'] = data[0]['next_page']  # Move to next page
+                else:
+                    break  # No more pages, exit the loop
+            except (ValueError, KeyError):
+                print("Error processing response data.")
+                return None
+        else:
+            print(f"Failed to fetch participants for event {race_id}: {response.status_code}")
+            return None
+
+    return all_participants
+
+def fetch_total_count(api_key, api_secret, event_id):
+    url = f"https://runsignup.com/Rest/race/81794/participant-counts"
+    params = {
+        'api_key': api_key,
+        'api_secret': api_secret,
+        'format': 'json',
+        'event_id': event_id
+    }
+
+    response = requests.get(url, params=params)
+    if response.status_code == 200:
+        try:
+            data = response.json()
+            participant_counts = data.get('participant_counts', [])
+            for entry in participant_counts:
+                if 'event_id' in entry and 'num_participants' in entry:
+                    if entry['event_id'] == int(event_id):
+                        total_count = entry['num_participants']
+                        return total_count
+            print(f"Failed to find total count for event {event_id} in the response.")
+            print(f"Response content: {data}")
+            return None
+        except ValueError:
+            print(f"Failed to parse total count response for event {event_id}")
+            print(f"Response content: {response.content.decode('utf-8')}")
+            return None
+    else:
+        print(f"Failed to fetch total count for event {event_id}: {response.status_code}")
+        print(f"Response content: {response.content.decode('utf-8')}")
+        return None
+
+def write_to_csv(participants, filename):
+    if not participants:
+        print("No participant data to write.")
+        return
+
+    headers = participants[0].keys()
+    # Flatten user information into individual columns
+    flattened_headers = [header for header in headers if header != 'user']
+    user_keys = participants[0]['user'].keys()
+    for key in user_keys:
+        if key != 'address':
+            flattened_headers.append(f"user_{key}")
+        else:
+            address_keys = participants[0]['user']['address'].keys()
+            for address_key in address_keys:
+                flattened_headers.append(f"user_address_{address_key}")
+
+    file_path = "/Users/adamswansen/Library/CloudStorage/OneDrive-Personal/Documents/" + filename
+    with open(file_path, 'w', newline='') as file:
+        writer = csv.DictWriter(file, fieldnames=flattened_headers)
+        writer.writeheader()
+        for participant in participants:
+            flat_participant = {}
+            # Copy non-user information
+            for header in flattened_headers:
+                if 'user_' not in header:
+                    flat_participant[header] = participant.get(header, '')
+            # Flatten user information
+            user_info = participant.get('user', {})
+            for key in user_keys:
+                if key != 'address':
+                    flat_participant[f"user_{key}"] = user_info.get(key, '')
+                else:
+                    address_info = user_info.get('address', {})
+                    for address_key in address_keys:
+                        flat_participant[f"user_address_{address_key}"] = address_info.get(address_key, '')
+            writer.writerow(flat_participant)
+
+    print(f"Participant data written to {file_path}")
+
+def main():
+    api_key = "KMVON3kq3XACAi6X7v93Ywfh4o9GWm5n"  # Replace with your actual API key
+    api_secret = "4iWghgVjmdRGtY4MkfoKiM2krtHr4KcT"  # Replace with your actual API secret
+    event_ids = ['719505', '719506', '719507', '719508', '719509', '806053', '806064', '806065']  # Replace with the actual event IDs
+    all_participants = []
+
+    for event_id in event_ids:
+        total_count = fetch_total_count(api_key, api_secret, event_id)
+        if total_count is not None:
+            print(f"Total participant count for event {event_id}: {total_count}")
+            participants = fetch_participants(api_key, api_secret, event_id)
+            if participants:
+                all_participants.extend(participants)
+
+    if all_participants:
+        write_to_csv(all_participants, "participants24.csv")
+        print("Participant data written to participants.csv")
+    else:
+        print("No participant data retrieved.")
+
+if __name__ == "__main__":
+    main()
